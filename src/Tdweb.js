@@ -1,89 +1,89 @@
 import React, { useEffect, useState, useRef } from "react";
+import axios from "axios";
 
 export default function TrueDataDynamicTable() {
   const [inputText, setInputText] = useState("");
+  const [suggestions, setSuggestions] = useState([]); 
+  const [showDropdown, setShowDropdown] = useState(false);
+  
   const [marketData, setMarketData] = useState({});
   const [status, setStatus] = useState("Connecting...");
   
   const ws = useRef(null);
-  
-  // Bridge to link ID -> Name (e.g., "100001528" -> "TCS")
   const idToNameMap = useRef({}); 
+  const debounceTimeout = useRef(null);
 
   useEffect(() => {
     ws.current = new WebSocket("wss://push.truedata.in:8082?user=td131&password=smital@131");
 
-    ws.current.onopen = () => setStatus("Waiting for Handshake...");
+    ws.current.onopen = () => setStatus("Connected (Ready)");
+    ws.current.onclose = () => setStatus("Disconnected");
 
     ws.current.onmessage = (event) => {
       const msg = JSON.parse(event.data);
 
-      // 1. Handshake
+    
       if (msg.message === "TrueData Real Time Data Service" && msg.success) {
         setStatus("Connected (Ready)");
-      }
+      } 
       
-      // 2. Snapshot (Populate List)
+      
       else if (msg.symbollist) {
-        console.log("Snapshot:", msg.symbollist);
-
         msg.symbollist.forEach((item) => {
-          // GUARD: Check if item is valid array
           if (!Array.isArray(item)) return;
-
+          
           const symName = item[0]; 
           const symID = item[1];   
+          if (symName.includes("Invalid")) return;
           
-          // GUARD: Filter out "Invalid Symbol" errors from server
-          if (symName.includes("Invalid")) {
-             console.warn("Server reported invalid symbol:", symName);
-             return; 
-          }
-          
-          // Map ID to Name immediately
           idToNameMap.current[symID] = symName;
 
           setMarketData((prev) => ({
             ...prev,
             [symName]: {
-              name: symName,
-              id: symID,
-              ltp: item[3],
-              open: item[7],
-              high: item[8],
-              low: item[9],
-              close: item[10]
+              name:       item[0],    
+              id:         item[1],    
+              time:       item[2],   
+              ltp:        item[3],    
+              ltq:        item[4],    
+              atp:        item[5],    
+              volume:     item[6],    
+              open:       item[7],    
+              high:       item[8],    
+              low:        item[9],    
+              close:      item[10],   
+              oi:         item[11],  
+              poic:       item[12],   
+              turnover:   item[13],   
+              bid:        item[14],   
+              bidqty:     item[15],   
+              ask:        item[16],   
+              askqty:     item[17],   
+              
+              color: "transparent" 
             }
           }));
         });
-      }
-          
+      } 
+      
+      // C. LIVE TRADE FEED (Updates)
       else if (msg.trade) {
-        // GUARD: Ensure it is a valid trade array (Not text message)
         if (!Array.isArray(msg.trade) || msg.trade.length < 5) return;
-
+        
         const trade = msg.trade;
         const rawKey = trade[0];
-
-        // CHECK THE MAP: Do we know this ID? 
         const realName = idToNameMap.current[rawKey] || rawKey;
 
-        
         setMarketData((prev) => {
             const oldData = prev[realName];
             
-            // Compare Prices
+            // Color Logic
             const newLTP = parseFloat(trade[2]);
             const oldLTP = oldData ? parseFloat(oldData.ltp) : newLTP;
             
-            // Decide Row Color
-            let newColor = oldData?.color || "white"; 
-            
-            if (newLTP > oldLTP) {
-                newColor = "#a7f2a7ff"; // Green (Up)
-            } else if (newLTP < oldLTP) {
-                newColor = "#ff6b6bff"; // Red (Down)
-            }
+            let newColor = oldData?.color || "transparent"; 
+            if (newLTP > oldLTP) newColor = "#a7f2a7"; 
+            else if (newLTP < oldLTP) newColor = "#ff6b6b";
 
             return {
               ...prev,
@@ -91,129 +91,237 @@ export default function TrueDataDynamicTable() {
                 ...oldData, 
                 name: realName,    
                 id: rawKey,
-                ltp: trade[2],
-                color: newColor,
-                open: trade[6],
-                high: trade[9],
-                low: trade[8],
-                volume: trade[5]
+                
+  
+                time:       trade[1],
+                ltp:        trade[2],
+                ltq:        trade[3],
+                atp:        trade[4],
+                volume:     trade[5],
+                open:       trade[6],
+                high:       trade[7],
+                low:        trade[8],
+                close:      trade[9],
+                oi:         trade[10],
+                poic:       trade[11],
+                turnover:   trade[12],
+                // trade[13] skipped?
+                tick:       trade[14], 
+                bid:        trade[15],
+                bidqty:     trade[16],
+                ask:        trade[17],
+                askqty:     trade[18],
+                
+                color: newColor
               }
             };
         });
       }
     };
-
-    return () => {
-      if (ws.current) {
-        ws.current.close();
-      }
-    };
+    return () => { if (ws.current) ws.current.close(); };
   }, []);
 
-  // Actions
-  const handleAddSymbol = () => {
-    if (!inputText) return;
-    const symbolToAdd = inputText.toUpperCase();
-    if (ws.current && ws.current.readyState === WebSocket.OPEN) {
-      ws.current.send(JSON.stringify({ method: "addsymbol", symbols: [symbolToAdd] }));
-    }
-    setInputText("");
-  };
 
-  const handleRemoveSymbol = (symName, symID) => {
-    
-    if (ws.current && ws.current.readyState === WebSocket.OPEN) {
-        // Try sending both (some servers prefer Name, some ID)
-        const symbolsToRemove = [];
-        if (symName) symbolsToRemove.push(symName);
-        if (symID) symbolsToRemove.push(symID);
-        
-        ws.current.send(JSON.stringify({ method: "removesymbol", symbols: symbolsToRemove }));
+  const fetchSuggestions = async (query) => {
+    if (!query || query.length < 2) {
+        setSuggestions([]);
+        return;
     }
 
-    // This loops through all rows and keeps only the ones that DO NOT match
-    setMarketData((prev) => {
-        const newData = {};
+    // Using 'segment=all' so you can find Futures/Options 
+    const url = `https://api.truedata.in/getAllSymbols?user=td131&password=smital@131&segment=all&search=${query.toUpperCase()}`;
 
-        Object.keys(prev).forEach((key) => {
-            const row = prev[key];
-            
-            // Logic: Is this the row we want to delete?
-            // Check if Name matches OR if ID matches
-            const isMatch = (symName && row.name === symName) || 
-                            (symID && row.id === symID);
+    try {
+        const res = await axios.get(url);
+        const allRecords = res.data.Records || [];
+        const top10 = allRecords.slice(0, 10);
 
-            if (!isMatch) {
-                // If it's NOT a match, keep it.
-                newData[key] = row;
+        const parsedData = top10.map(item => {
+            if (Array.isArray(item)) {
+                return { id: item[0], symbol: item[1], name: item[2] };
+            } else {
+                return {
+                    id: item.Symbol_ID,
+                    symbol: item.Symbol,
+                    name: item.Name || item.Description
+                };
             }
         });
 
+        setSuggestions(parsedData);
+        setShowDropdown(true);
+
+    } catch (err) {
+        console.error("Search Error:", err);
+    }
+  };
+
+  const handleInputChange = (e) => {
+    const val = e.target.value;
+    setInputText(val);
+    if (debounceTimeout.current) clearTimeout(debounceTimeout.current);
+    debounceTimeout.current = setTimeout(() => fetchSuggestions(val), 300);
+  };
+
+  const selectSuggestion = (symbol) => {
+      setInputText(symbol || "");
+      setShowDropdown(false);
+  };
+
+
+  const handleAddSymbol = (symbolOverride) => {
+    const sym = (typeof symbolOverride === "string" ? symbolOverride : inputText);
+    if (!sym) return;
+
+    if (ws.current && ws.current.readyState === WebSocket.OPEN) {
+      ws.current.send(JSON.stringify({ method: "addsymbol", symbols: [sym.toUpperCase()] }));
+    }
+    setInputText("");
+    setShowDropdown(false);
+  };
+
+  const handleRemoveSymbol = (symName, symID) => {
+    if (ws.current && ws.current.readyState === WebSocket.OPEN) {
+        const symbolsToRemove = [];
+        if (symName) symbolsToRemove.push(symName);
+        if (symID) symbolsToRemove.push(symID);
+        ws.current.send(JSON.stringify({ method: "removesymbol", symbols: symbolsToRemove }));
+    }
+    setMarketData((prev) => {
+        const newData = {};
+        Object.keys(prev).forEach((key) => {
+            const row = prev[key];
+            const isMatch = (symName && row.name === symName) || (symID && row.id === symID);
+            if (!isMatch) newData[key] = row;
+        });
         return newData;
     });
   };
 
   return (
-    <div style={{ padding: "20px", fontFamily: "sans-serif" }}>
-      <h3>TrueData Dynamic Feed</h3>
-      <p>Status: <b style={{color: "green"}}>{status}</b></p>
-
-      <div style={{ marginBottom: "20px" }}>
-        <input 
-          type="text" 
-          value={inputText}
-          onChange={(e) => setInputText(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && handleAddSymbol()}
-          placeholder="Enter Symbol (e.g. TCS)"
-          style={{ padding: "8px" }}
-        />
-        <button onClick={handleAddSymbol} style={{ padding: "8px 15px", marginLeft:"10px" }}>
-         Subscribe
-        </button>
+    <div style={{ padding: "20px", fontFamily: "Arial, sans-serif", height: "100vh" }}>
+      <h3 style={{ marginBottom: "10px" }}>TrueData Dynamic Feed</h3>
+      <div style={{ marginBottom: "15px", fontSize: "14px" }}>
+        Status: <b style={{color: status.includes("Connected") ? "green" : "red"}}>{status}</b>
       </div>
 
-      <table border="1" style={{ width: "100%", borderCollapse: "collapse" }}>
-        <thead style={{ background: "#333", color: "white" }}>
-          <tr>
-            <th style={{ padding: "10px" }}>Symbol Name</th>
-            <th style={{ padding: "10px" }}>LTP</th>
-            <th style={{ padding: "10px" }}>Open</th>
-            <th style={{ padding: "10px" }}>High</th>
-            <th style={{ padding: "10px" }}>Low</th>
-            <th style={{ padding: "10px" }}>Close</th>
-            <th style={{ padding: "10px" }}>Action</th>
-          </tr>
-        </thead>
-        <tbody>
-          {Object.values(marketData).length === 0 ? (
-            <tr><td colSpan="7" style={{textAlign:"center", padding:"20px"}}>No Data</td></tr>
-          ) : (
-            Object.values(marketData).map((data) => (
-              // Use ID or Name as key to be safe
-              <tr key={data.id || data.name} style={{ 
-                    background: data.color, 
-                    transition: "color 0.3s ease" 
-                }}>
-                <td style={{ fontWeight: "bold", padding: "10px" }}>{data.name}</td>
-                <td>{data.ltp}</td>
-                <td>{data.open}</td>
-                <td >{data.high}</td>
-                <td >{data.low}</td>
-                <td>{data.close}</td>
-                <td style={{ textAlign: "center" }}>
-                  <button 
-                    // IMPORTANT: Pass BOTH Name and ID to the remove function
-                    onClick={() => handleRemoveSymbol(data.name, data.id)}
-                    style={{ cursor: "pointer", background: "#f5e7e7ff", padding: "5px 10px" }}
-                  >
-                    Unsubscribe
-                  </button>
-                </td>
-              </tr>
-            ))
-          )}
-        </tbody>
-      </table>
+      {/* DROPDOWN SEARCH */}
+      <div style={{ marginBottom: "20px", position: "relative", width: "400px" }}>
+        <div style={{ display: "flex", gap: "10px" }}>
+            <input 
+              type="text" 
+              value={inputText}
+              onChange={handleInputChange}
+              onKeyDown={(e) => e.key === 'Enter' && handleAddSymbol()}
+              placeholder="Search (e.g. NIFTY-I for Futures)"
+              style={{ padding: "10px", flex: 1, fontSize:"14px", border: "1px solid #ccc", borderRadius: "4px" }}
+            />
+            <button 
+                onClick={handleAddSymbol} 
+                style={{ padding: "10px 20px", background:"#007bff", color:"white", border:"none", borderRadius:"4px", cursor:"pointer" }}>
+                Subscribe
+            </button>
+        </div>
+
+        {showDropdown && suggestions.length > 0 && (
+            <ul style={{
+                position: "absolute", top: "100%", left: 0, width: "100%",
+                background: "white", border: "1px solid #ccc",
+                listStyle: "none", padding: 0, margin: 0,
+                zIndex: 9999, maxHeight: "300px", overflowY: "auto",
+                boxShadow: "0px 4px 8px rgba(0,0,0,0.2)"
+            }}>
+                {suggestions.map((item, idx) => (
+                    <li 
+                        key={idx} 
+                        onClick={() => selectSuggestion(item.symbol)}
+                        style={{ 
+                            padding: "10px", cursor: "pointer", 
+                            borderBottom: "1px solid #eee", fontSize: "13px", color: "black"
+                        }}
+                        onMouseEnter={(e) => e.currentTarget.style.background = "#f0f0f0"}
+                        onMouseLeave={(e) => e.currentTarget.style.background = "white"}
+                    >
+                        <div style={{fontWeight:"bold"}}>{item.symbol}</div>
+                        <div style={{fontSize:"11px", color:"#666"}}>{item.name}</div>
+                    </li>
+                ))}
+            </ul>
+        )}
+      </div>
+
+      {/* DATA TABLE */}
+      <div style={{ overflowX: "auto", border: "1px solid #ddd", boxShadow: "0 2px 4px rgba(0,0,0,0.1)" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize:"13px", minWidth:"1400px", fontFamily: "monospace" }}>
+          <thead style={{ background: "#333", color: "white", textAlign: "left" }}>
+            <tr>
+              <th style={thStyle}>Symbol</th>
+              <th style={thStyle}>Time</th>
+              <th style={thStyle}>LTP</th>
+              <th style={thStyle}>LTQ</th>
+              <th style={thStyle}>ATP</th>
+              <th style={thStyle}>Vol</th>
+              <th style={thStyle}>Open</th>
+              <th style={thStyle}>High</th>
+              <th style={thStyle}>Low</th>
+              <th style={thStyle}>Close</th>
+              <th style={thStyle}>OI</th>
+              <th style={thStyle}>Prev OI</th>
+              <th style={thStyle}>Turnover</th>
+              <th style={thStyle}>Bid (Qty)</th>
+              <th style={thStyle}>Ask (Qty)</th>
+              <th style={{...thStyle, textAlign: "center"}}>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {Object.values(marketData).length === 0 ? (
+              <tr><td colSpan="16" style={{textAlign:"center", padding:"30px", color:"#666"}}>No Symbols Subscribed</td></tr>
+            ) : (
+              Object.values(marketData).map((data) => (
+                <tr key={data.id || data.name} style={{ borderBottom: "1px solid #eee" }}>
+                  <td style={{ ...tdStyle, fontWeight: "bold" }}>{data.name}</td>
+                  <td style={tdStyle}>{data.time ? new Date(data.time).toLocaleTimeString() : "-"}</td>
+                  
+                  <td style={{ 
+                      ...tdStyle, 
+                      fontWeight: "bold",
+                      background: data.color, 
+                      transition: "background 0.5s ease" 
+                  }}>
+                      {data.ltp}
+                  </td>
+
+                  <td style={tdStyle}>{data.ltq}</td>
+                  <td style={tdStyle}>{data.atp}</td>
+                  <td style={tdStyle}>{data.volume}</td>
+                  <td style={tdStyle}>{data.open}</td>
+                  <td style={{ ...tdStyle, color:"green" }}>{data.high}</td>
+                  <td style={{ ...tdStyle, color:"red" }}>{data.low}</td>
+                  <td style={tdStyle}>{data.close}</td>
+                  <td style={tdStyle}>{data.oi}</td>
+                  <td style={tdStyle}>{data.poic}</td>
+                  <td style={tdStyle}>{data.turnover}</td>
+                  
+                  <td style={{ ...tdStyle, color: "blue" }}>{data.bid} ({data.bidqty})</td>
+                  <td style={{ ...tdStyle, color: "red" }}>{data.ask} ({data.askqty})</td>
+                  
+                  <td style={{ ...tdStyle, textAlign: "center" }}>
+                    <button 
+                        onClick={() => handleRemoveSymbol(data.name, data.id)} 
+                        style={{ cursor: "pointer", background: "#ff4d4d", color: "white", border: "none", padding: "5px 10px", borderRadius: "3px" }}
+                    >
+                        Remove
+                    </button>
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
+
+const thStyle = { padding: "10px", whiteSpace: "nowrap" };
+const tdStyle = { padding: "8px", whiteSpace: "nowrap" };
