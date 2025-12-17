@@ -10,6 +10,8 @@
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
     "react-scripts": "5.0.1",
+    "react-use-websocket": "^4.13.0",
+    "truedata-nodejs": "^1.0.22",
     "web-vitals": "^2.1.4"
   },
   "scripts": {
