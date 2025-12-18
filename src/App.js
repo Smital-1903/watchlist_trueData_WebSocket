@@ -1,10 +1,10 @@
 import './App.css';
-import Tdweb from './Tdweb';
+import WatchlistMain from './WatchlistMain';
 
 function App(){
     return(
         <div>
-            <Tdweb/>
+            <WatchlistMain/>
         </div>
     );
 }
