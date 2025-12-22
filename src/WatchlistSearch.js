@@ -34,7 +34,7 @@ export default function WatchlistSearch({ status, onSubscribe, onLogin, credenti
 
         const parsedData = top10.map(item => {
             if (Array.isArray(item)) {
-                return { id: item[0], symbol: item[1] };
+                return { id: item[0], symbol: item[1]};
             } else {
                 return { id: item.Symbol_ID, symbol: item.Symbol};
             }
@@ -67,6 +67,10 @@ export default function WatchlistSearch({ status, onSubscribe, onLogin, credenti
         setShowDropdown(false);
     }
   };
+   
+   
+
+
 
   return (
     <div style={{ marginBottom: "20px", borderBottom: "1px solid #ddd", paddingBottom: "15px" }}>
